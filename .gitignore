@@ -1,0 +1,16 @@
+cat > .gitignore << 'EOF'
+.venv/
+
+__pycache__/
+*.pyc
+
+runtime/
+transcripts/
+
+edge-arena-profile/
+browser-profile/
+
+.DS_Store
+
+.env
+EOF
