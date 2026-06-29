@@ -1,4 +1,3 @@
-cat > .gitignore << 'EOF'
 .venv/
 
 __pycache__/
@@ -13,4 +12,3 @@ browser-profile/
 .DS_Store
 
 .env
-EOF
