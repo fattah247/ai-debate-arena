@@ -4,6 +4,8 @@ I built this project to run a structured multi room debate across fixed role tab
 
 The goal is simple. I want a repeatable way to test an idea from several angles, keep the conversation disciplined, and resume the work later without rebuilding the setup from scratch.
 
+![AI Debate Arena control panel](docs/control-panel.jpg)
+
 ## What it does
 
 - Runs a local control panel with Flask
@@ -128,6 +130,10 @@ Local browser profile used by the runner
 - The repository only needs source code and documentation
 - If a session is already active, the launcher will refuse a second run for the same session
 - If a role room points to a generic landing page, the run will stop before sending turns into the wrong place
+
+## License
+
+This project is released under the MIT License. See `LICENSE`.
 
 ## Good fit
 
