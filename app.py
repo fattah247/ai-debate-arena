@@ -39,6 +39,13 @@ from flask import (
     url_for,
 )
 
+from role_config import (
+    ARENA_MODE_LABELS,
+    ROLE_DEFINITIONS,
+    ROLE_LABELS,
+    active_roles_for_mode,
+)
+
 
 BASE_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = BASE_DIR / "runtime"
@@ -51,6 +58,7 @@ PORT = 5050
 
 SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 DEFAULT_CHAT_URL = "https://chatgpt.com/"
+DEFAULT_PROMPT_BACKUP_PATH = BASE_DIR / "default_prompt.local.json"
 
 app = Flask(__name__)
 app.config.update(
@@ -215,7 +223,7 @@ def validate_role_url(
 
 
 def defaults() -> dict[str, Any]:
-    return {
+    values = {
         "arena_mode": "four_ai",
         "run_style": "fixed",
         "fixed_turns": 18,
@@ -223,18 +231,26 @@ def defaults() -> dict[str, Any]:
         "stall_review_limit": 3,
         "transport_retry_initial_seconds": 8,
         "transport_retry_max_seconds": 120,
-        "operator_url": DEFAULT_CHAT_URL,
-        "investor_url": DEFAULT_CHAT_URL,
-        "customer_url": DEFAULT_CHAT_URL,
-        "moderator_url": DEFAULT_CHAT_URL,
         "shared_prompt": "",
         "business_prompt": "",
         "prompt": "",
-        "operator_role": "",
-        "investor_role": "",
-        "customer_role": "",
-        "moderator_role": "",
     }
+
+    values.update(
+        {
+            role.url_field: DEFAULT_CHAT_URL
+            for role in ROLE_DEFINITIONS
+        }
+    )
+
+    values.update(
+        {
+            role.prompt_field: ""
+            for role in ROLE_DEFINITIONS
+        }
+    )
+
+    return values
 
 
 def normalize_config(raw: Any) -> dict[str, Any]:
@@ -271,20 +287,6 @@ def load_session_config(
     )
 
 
-def active_roles_for_mode(
-    arena_mode: str,
-) -> list[str]:
-    roles = ["operator", "investor"]
-
-    if arena_mode == "four_ai":
-        roles.append("customer")
-
-    if arena_mode in {"three_ai", "four_ai"}:
-        roles.append("moderator")
-
-    return roles
-
-
 def form_config() -> tuple[dict[str, Any], list[str]]:
     errors: list[str] = []
 
@@ -309,41 +311,37 @@ def form_config() -> tuple[dict[str, Any], list[str]]:
     }:
         errors.append("Run style is invalid.")
 
-    role_labels = {
-        "operator": "Operator",
-        "investor": "Investor + Market Analyst",
-        "customer": "Customer",
-        "moderator": "Moderator",
-    }
-
     active_roles = active_roles_for_mode(
         arena_mode
     )
 
     urls: dict[str, str] = {}
 
-    for role, label in role_labels.items():
+    for role_definition in ROLE_DEFINITIONS:
         raw_url = str(
             request.form.get(
-                f"{role}_url",
+                role_definition.url_field,
                 "",
             )
         ).strip()
 
-        if role not in active_roles and not raw_url:
-            urls[f"{role}_url"] = DEFAULT_CHAT_URL
+        if (
+            role_definition.key not in active_roles
+            and not raw_url
+        ):
+            urls[role_definition.url_field] = DEFAULT_CHAT_URL
             continue
 
         try:
-            urls[f"{role}_url"] = validate_role_url(
-                label,
+            urls[role_definition.url_field] = validate_role_url(
+                role_definition.label,
                 raw_url,
             )
         except ValueError as exc:
-            if role in active_roles:
+            if role_definition.key in active_roles:
                 errors.append(str(exc))
             else:
-                urls[f"{role}_url"] = (
+                urls[role_definition.url_field] = (
                     raw_url
                     or DEFAULT_CHAT_URL
                 )
@@ -357,30 +355,13 @@ def form_config() -> tuple[dict[str, Any], list[str]]:
     ).strip()
 
     roles = {
-        "operator_role": str(
+        role.prompt_field: str(
             request.form.get(
-                "operator_role",
+                role.prompt_field,
                 "",
             )
-        ).strip(),
-        "investor_role": str(
-            request.form.get(
-                "investor_role",
-                "",
-            )
-        ).strip(),
-        "customer_role": str(
-            request.form.get(
-                "customer_role",
-                "",
-            )
-        ).strip(),
-        "moderator_role": str(
-            request.form.get(
-                "moderator_role",
-                "",
-            )
-        ).strip(),
+        ).strip()
+        for role in ROLE_DEFINITIONS
     }
 
     if not shared_prompt:
@@ -396,12 +377,12 @@ def form_config() -> tuple[dict[str, Any], list[str]]:
 
     if not roles["operator_role"]:
         errors.append(
-            "Operator role cannot be empty."
+            f"{ROLE_LABELS['operator']} prompt cannot be empty."
         )
 
     if not roles["investor_role"]:
         errors.append(
-            "Investor role cannot be empty."
+            f"{ROLE_LABELS['investor']} prompt cannot be empty."
         )
 
     if (
@@ -409,7 +390,8 @@ def form_config() -> tuple[dict[str, Any], list[str]]:
         and not roles["customer_role"]
     ):
         errors.append(
-            "Customer role cannot be empty in 4 AI mode."
+            f"{ROLE_LABELS['customer']} prompt cannot be empty "
+            "in 4 AI mode."
         )
 
     if (
@@ -417,7 +399,7 @@ def form_config() -> tuple[dict[str, Any], list[str]]:
         and not roles["moderator_role"]
     ):
         errors.append(
-            "Moderator role cannot be empty "
+            "Moderator prompt cannot be empty "
             "in moderated mode."
         )
 
@@ -755,15 +737,22 @@ PAGE = r'''
   <title>AI Debate Arena</title>
   <style>
     :root {
-      --bg: #0b1018;
-      --panel: #121d2a;
-      --input: #0a111a;
-      --border: #2b4764;
-      --text: #eef5fb;
-      --muted: #adc0d3;
-      --accent: #8ed7ff;
-      --danger: #d96872;
-      --ok: #77d69d;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --panel-subtle: #f8fafc;
+      --input: #fbfcfe;
+      --border: #d7dee8;
+      --border-strong: #aeb9c7;
+      --text: #1f2937;
+      --muted: #647386;
+      --accent: #0f766e;
+      --accent-hover: #115e59;
+      --secondary: #2f5f9e;
+      --secondary-hover: #264f84;
+      --danger: #b94747;
+      --ok: #1f7a4d;
+      --warning: #9a6a16;
+      --radius: 8px;
     }
 
     * {
@@ -783,19 +772,21 @@ PAGE = r'''
     }
 
     main {
-      max-width: 1480px;
+      max-width: 1440px;
       margin: 0 auto;
-      padding: 28px 20px 64px;
+      padding: 24px 20px 56px;
     }
 
     h1 {
       margin: 0 0 6px;
-      font-size: 32px;
+      font-size: 28px;
+      line-height: 1.1;
     }
 
     h2 {
-      margin: 0 0 12px;
-      font-size: 20px;
+      margin: 0 0 14px;
+      font-size: 17px;
+      line-height: 1.25;
     }
 
     .muted,
@@ -807,19 +798,26 @@ PAGE = r'''
       font-size: 13px;
     }
 
+    .intro {
+      max-width: 1260px;
+    }
+
     .layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 365px;
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 18px;
       align-items: start;
     }
 
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: var(--radius);
       padding: 18px;
-      margin-bottom: 18px;
+      margin-bottom: 14px;
+      transition:
+        border-color .16s ease,
+        background-color .16s ease;
     }
 
     .grid {
@@ -832,11 +830,15 @@ PAGE = r'''
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
+    .settings-grid {
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+    }
+
     label {
       display: block;
       margin-bottom: 6px;
       font-size: 14px;
-      font-weight: 800;
+      font-weight: 700;
     }
 
     input,
@@ -846,9 +848,22 @@ PAGE = r'''
       background: var(--input);
       color: var(--text);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
+      border-radius: var(--radius);
+      padding: 10px 11px;
       font: inherit;
+      transition:
+        border-color .14s ease,
+        box-shadow .14s ease,
+        background-color .14s ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--secondary);
+      box-shadow: 0 0 0 3px rgb(47 95 158 / 14%);
+      background: #ffffff;
     }
 
     textarea {
@@ -866,24 +881,40 @@ PAGE = r'''
 
     button {
       border: 0;
-      border-radius: 10px;
+      border-radius: var(--radius);
       padding: 11px 14px;
       font: inherit;
-      font-weight: 800;
+      font-weight: 700;
       cursor: pointer;
       background: var(--accent);
-      color: #06101a;
+      color: #ffffff;
+      transition:
+        transform .12s ease,
+        background-color .12s ease,
+        box-shadow .12s ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
     }
 
     button.secondary {
-      background: #1d3147;
-      color: var(--text);
-      border: 1px solid var(--border);
+      background: var(--secondary);
+      color: #ffffff;
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: var(--secondary-hover);
     }
 
     button.danger {
       background: var(--danger);
       color: white;
+    }
+
+    button.danger:hover:not(:disabled) {
+      background: #9f3e3e;
     }
 
     button:disabled {
@@ -899,51 +930,64 @@ PAGE = r'''
     }
 
     .notice {
-      border-radius: 12px;
+      border-radius: var(--radius);
       padding: 12px 14px;
       margin: 14px 0;
       border: 1px solid var(--border);
+      background: var(--panel);
+      animation: notice-in .18s ease-out;
     }
 
     .notice.ok {
-      border-color: #2f7952;
-      color: #d9ffe8;
+      border-color: #8cc9a6;
+      color: var(--ok);
     }
 
     .notice.error {
-      border-color: #91454e;
-      color: #ffe0e3;
+      border-color: #d69a9a;
+      color: var(--danger);
     }
 
     .session {
       padding: 11px;
       margin: 9px 0;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      background: var(--input);
+      border-radius: var(--radius);
+      background: var(--panel-subtle);
+      transition:
+        border-color .14s ease,
+        background-color .14s ease,
+        transform .14s ease;
     }
 
     .session.active {
-      border-color: #60bceb;
+      border-color: var(--secondary);
+      background: #f1f6ff;
+    }
+
+    .session:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
     }
 
     .status {
       display: inline-block;
       font-size: 12px;
-      font-weight: 800;
+      font-weight: 700;
       padding: 3px 8px;
       border-radius: 999px;
-      background: #30465d;
+      background: #e2e8f0;
+      color: #334155;
     }
 
     .status.runner_active {
-      background: #276745;
-      color: #dbffe9;
+      background: #dff3e9;
+      color: var(--ok);
     }
 
     .status.paused_with_pending_turn {
-      background: #6b5425;
-      color: #fff1d0;
+      background: #fff1d6;
+      color: var(--warning);
     }
 
     code,
@@ -964,9 +1008,9 @@ PAGE = r'''
         SFMono-Regular,
         Menlo,
         monospace;
-      background: var(--input);
+      background: var(--panel-subtle);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius);
       padding: 12px;
       min-height: 130px;
     }
@@ -977,12 +1021,40 @@ PAGE = r'''
       overflow-wrap: anywhere;
     }
 
+    .status-decision {
+      display: block;
+      margin-top: 4px;
+      max-height: 150px;
+      overflow: auto;
+      background: var(--panel-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 9px 10px;
+    }
+
     a {
-      color: var(--accent);
+      color: var(--secondary);
     }
 
     .tiny {
       font-size: 12px;
+    }
+
+    aside {
+      position: sticky;
+      top: 16px;
+    }
+
+    @keyframes notice-in {
+      from {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     @media (max-width: 1050px) {
@@ -990,7 +1062,15 @@ PAGE = r'''
         grid-template-columns: 1fr;
       }
 
+      aside {
+        position: static;
+      }
+
       .grid.four {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .settings-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
@@ -1000,9 +1080,18 @@ PAGE = r'''
         padding: 18px 12px 40px;
       }
 
+      h1 {
+        font-size: 24px;
+      }
+
       .grid,
-      .grid.four {
+      .grid.four,
+      .settings-grid {
         grid-template-columns: 1fr;
+      }
+
+      button {
+        width: 100%;
       }
     }
   </style>
@@ -1011,7 +1100,7 @@ PAGE = r'''
 <main>
   <h1>AI Debate Arena</h1>
 
-  <p class="muted">
+  <p class="muted intro">
     The selected session is editable. <b>Save Changes</b> writes the
     current form into that session. <b>Save Changes &amp; Resume</b>
     writes first, then launches
@@ -1050,6 +1139,13 @@ PAGE = r'''
               <code>config.json</code>. The runner reads these values
               the next time it starts.
             </p>
+
+            {% if default_prompt_backup_exists %}
+              <p class="hint">
+                Default prompt backup is saved locally as
+                <code>{{ default_prompt_backup_name }}</code>.
+              </p>
+            {% endif %}
           {% else %}
             <p class="hint">
               No selected session. Use Start New Session to create one.
@@ -1065,32 +1161,16 @@ PAGE = r'''
               <label>Arena mode</label>
 
               <select name="arena_mode">
-                <option
-                  value="two_ai"
-                  {% if values.arena_mode == 'two_ai' %}
-                    selected
-                  {% endif %}
-                >
-                  2 AI: Operator + Investor
-                </option>
-
-                <option
-                  value="three_ai"
-                  {% if values.arena_mode == 'three_ai' %}
-                    selected
-                  {% endif %}
-                >
-                  3 AI: Operator + Investor + Moderator
-                </option>
-
-                <option
-                  value="four_ai"
-                  {% if values.arena_mode == 'four_ai' %}
-                    selected
-                  {% endif %}
-                >
-                  4 AI: Operator + Investor + Customer + Moderator
-                </option>
+                {% for value, label in arena_mode_labels.items() %}
+                  <option
+                    value="{{ value }}"
+                    {% if values.arena_mode == value %}
+                      selected
+                    {% endif %}
+                  >
+                    {{ label }}
+                  </option>
+                {% endfor %}
               </select>
             </div>
 
@@ -1120,7 +1200,7 @@ PAGE = r'''
           </div>
 
           <div
-            class="grid four"
+            class="grid settings-grid"
             style="margin-top:14px;"
           >
             <div>
@@ -1166,19 +1246,17 @@ PAGE = r'''
                 value="{{ values.transport_retry_initial_seconds }}"
               >
             </div>
-          </div>
 
-          <div
-            style="max-width:25%;margin-top:14px;"
-          >
-            <label>Maximum retry seconds</label>
-            <input
-              name="transport_retry_max_seconds"
-              type="number"
-              min="5"
-              max="900"
-              value="{{ values.transport_retry_max_seconds }}"
-            >
+            <div>
+              <label>Max retry seconds</label>
+              <input
+                name="transport_retry_max_seconds"
+                type="number"
+                min="5"
+                max="900"
+                value="{{ values.transport_retry_max_seconds }}"
+              >
+            </div>
           </div>
         </div>
 
@@ -1192,41 +1270,16 @@ PAGE = r'''
           </p>
 
           <div class="grid">
-            <div>
-              <label>Operator URL</label>
-              <input
-                name="operator_url"
-                value="{{ values.operator_url }}"
-                required
-              >
-            </div>
-
-            <div>
-              <label>Investor + Market Analyst URL</label>
-              <input
-                name="investor_url"
-                value="{{ values.investor_url }}"
-                required
-              >
-            </div>
-
-            <div>
-              <label>Customer URL</label>
-              <input
-                name="customer_url"
-                value="{{ values.customer_url }}"
-                required
-              >
-            </div>
-
-            <div>
-              <label>Moderator URL</label>
-              <input
-                name="moderator_url"
-                value="{{ values.moderator_url }}"
-                required
-              >
-            </div>
+            {% for role in role_definitions %}
+              <div>
+                <label>{{ role.label }} URL</label>
+                <input
+                  name="{{ role.url_field }}"
+                  value="{{ values[role.url_field] }}"
+                  required
+                >
+              </div>
+            {% endfor %}
           </div>
         </div>
 
@@ -1255,41 +1308,23 @@ PAGE = r'''
         <div class="panel">
           <h2>Role prompts</h2>
 
-          <label>Operator</label>
+          {% for role in role_definitions %}
+            <label
+              {% if not loop.first %}
+                style="margin-top:14px;"
+              {% endif %}
+            >
+              {{ role.label }}
+            </label>
 
-          <textarea
-            class="role"
-            name="operator_role"
-            required
-          >{{ values.operator_role }}</textarea>
-
-          <label style="margin-top:14px;">
-            Investor + Market Analyst
-          </label>
-
-          <textarea
-            class="role"
-            name="investor_role"
-            required
-          >{{ values.investor_role }}</textarea>
-
-          <label style="margin-top:14px;">
-            Customer
-          </label>
-
-          <textarea
-            class="role"
-            name="customer_role"
-          >{{ values.customer_role }}</textarea>
-
-          <label style="margin-top:14px;">
-            Moderator
-          </label>
-
-          <textarea
-            class="role"
-            name="moderator_role"
-          >{{ values.moderator_role }}</textarea>
+            <textarea
+              class="role"
+              name="{{ role.prompt_field }}"
+              {% if role.key in ['operator', 'investor'] %}
+                required
+              {% endif %}
+            >{{ values[role.prompt_field] }}</textarea>
+          {% endfor %}
         </div>
 
         <div class="panel">
@@ -1359,12 +1394,23 @@ PAGE = r'''
 
           <div class="kv">
             <b>Decision:</b>
-            {{ selected_status.current_decision.question }}
+            <span class="status-decision">
+              {{ selected_status.current_decision.question }}
+            </span>
           </div>
 
           <div class="kv">
             <b>Pending role:</b>
-            {{ selected_status.pending_turn.role or 'None' }}
+            {% if selected_status.pending_turn.role %}
+              {{
+                role_labels.get(
+                  selected_status.pending_turn.role,
+                  selected_status.pending_turn.role
+                )
+              }}
+            {% else %}
+              None
+            {% endif %}
           </div>
 
           <div class="kv">
@@ -1477,6 +1523,11 @@ def index():
         selected_session=session_id,
         selected_status=status,
         sessions=list_sessions(),
+        role_definitions=ROLE_DEFINITIONS,
+        role_labels=ROLE_LABELS,
+        arena_mode_labels=ARENA_MODE_LABELS,
+        default_prompt_backup_exists=DEFAULT_PROMPT_BACKUP_PATH.exists(),
+        default_prompt_backup_name=DEFAULT_PROMPT_BACKUP_PATH.name,
         command_preview=(
             command_for(session_id)
             if session_id
@@ -1737,4 +1788,3 @@ if __name__ == "__main__":
         debug=False,
         use_reloader=False,
     )
-
