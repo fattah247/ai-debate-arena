@@ -1,4 +1,4 @@
-# GPT Gemini Arena
+# AI Debate Arena
 
 I built this project to run a structured multi room debate across fixed role tabs while keeping the working state on disk between runs.
 
