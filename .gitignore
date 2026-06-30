@@ -12,3 +12,4 @@ browser-profile/
 .DS_Store
 
 .env
+default_prompt.local.json
