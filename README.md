@@ -8,7 +8,7 @@ The goal is simple. I want a repeatable way to test an idea from several angles,
 
 - Runs a local control panel with Flask
 - Saves each run as its own session
-- Uses separate role rooms for operator, investor, customer, and moderator
+- Uses separate role rooms for Role 1, Role 2, Role 3, and Moderator
 - Connects to a Chromium based browser over remote debugging
 - Writes session state, transcript, ledger, and final output to local files
 - Lets me pause, resume, and stop safely without losing the current decision trail
@@ -96,8 +96,8 @@ The UI also rejects generic home page links. Each active role must point to the 
 
 The runner supports two modes.
 
-- Two role relay
-- Moderated relay with three or four active roles
+- Two-role relay
+- Moderated relay with three or four active rooms
 
 In moderated runs, the moderator decides who speaks next and what decision the next turn should resolve.
 

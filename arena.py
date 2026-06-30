@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
+from role_config import ROLE_LABELS, active_roles_for_mode
+
 
 CDP_URL = "http://127.0.0.1:9222"
 CDP_RETRY_SECONDS = 5
@@ -30,13 +32,6 @@ MAX_LEDGER_CHARS = 18_000
 MAX_PEER_CHARS = 8_500
 MAX_TASK_CHARS = 9_000
 MAX_STATE_RESPONSE_CHARS = 16_000
-
-ROLE_LABELS = {
-    "operator": "Operator",
-    "investor": "Investor + Market Analyst",
-    "customer": "Customer",
-    "moderator": "Moderator",
-}
 
 PHASES = {
     "constraint_lock",
@@ -176,15 +171,7 @@ def pid_is_alive(pid: int) -> bool:
 
 
 def active_room_roles(mode: str) -> list[str]:
-    roles = ["operator", "investor"]
-
-    if mode == "four_ai":
-        roles.append("customer")
-
-    if mode in {"three_ai", "four_ai"}:
-        roles.append("moderator")
-
-    return roles
+    return active_roles_for_mode(mode)
 
 
 def url_host(url: str) -> str:
@@ -350,10 +337,11 @@ class Arena:
         self.config = self.load_config()
         self.mode = self.config["arena_mode"]
 
-        self.roles = ["operator", "investor"]
-
-        if self.mode == "four_ai":
-            self.roles.append("customer")
+        self.roles = [
+            role
+            for role in active_room_roles(self.mode)
+            if role != "moderator"
+        ]
 
         self.has_moderator = self.mode in {
             "three_ai",
@@ -1357,7 +1345,7 @@ Think privately before answering. Do not reveal hidden chain-of-thought.
 
 You control the substantive relay. This sequence is mandatory:
 Moderator -> exactly one selected participant -> Moderator -> exactly one selected participant.
-There is no automatic Operator -> Investor -> Customer order. Do not choose roles by fairness, rotation, or turn order. Choose the single role whose next contribution has the highest expected information value for the current exact decision.
+There is no automatic Role 1 -> Role 2 -> Role 3 order. Do not choose roles by fairness, rotation, or turn order. Choose the single role whose next contribution has the highest expected information value for the current exact decision.
 
 At the beginning there may be no participant positions. You must still choose the best first role and assign one bounded, high-information task.
 
