@@ -12,4 +12,14 @@ browser-profile/
 .DS_Store
 
 .env
+.env.*
+!.env.example
+!.env.sample
 default_prompt.local.json
+
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
